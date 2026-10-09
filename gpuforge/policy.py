@@ -217,13 +217,6 @@ def _group_by_category(processes: list[ProcessInfo]) -> dict[ProcessCategory, li
     return out
 
 
-def _gpu_util_high(snapshot: SystemSnapshot, threshold: float) -> bool:
-    gpu = snapshot.gpu
-    if not gpu.available or gpu.utilization_pct is None:
-        return False
-    return gpu.utilization_pct >= threshold
-
-
 def _base_nice(config: dict[str, Any], category: ProcessCategory) -> int:
     return int(config["nice"].get(category, config["nice"].get(ProcessCategory.UNKNOWN, 0)))
 

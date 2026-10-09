@@ -4,6 +4,7 @@ from gpuforge.models import GpuSnapshot, PolicyAction, ProcessCategory, ProcessI
 from gpuforge.optimize import (
     OptimizerRuntime,
     action_fingerprint,
+    collapse_actions,
     compute_sleep_interval,
     filter_redundant_actions,
 )
@@ -65,6 +66,28 @@ def test_adaptive_surge_uses_min_interval() -> None:
     state = OptimizerRuntime(last_gpu_util=20.0)
     sleep = compute_sleep_interval(cfg, _snap(gpu=35.0), state)
     assert sleep == 0.5
+
+
+def test_collapse_set_nice_keeps_higher_priority() -> None:
+    low = PolicyAction("set_nice", 1, "a", {"nice": 15, "rule_id": "r1"})
+    high = PolicyAction("set_nice", 1, "b", {"nice": -5, "rule_id": "r2"})
+    out = collapse_actions([low, high])
+    assert len(out) == 1
+    assert out[0].payload["nice"] == -5
+
+
+def test_fingerprint_ignores_rule_id_for_nice() -> None:
+    a = PolicyAction("set_nice", 2, "x", {"nice": 10, "rule_id": "a"})
+    b = PolicyAction("set_nice", 2, "x", {"nice": 10, "rule_id": "b"})
+    assert action_fingerprint(a) == action_fingerprint(b)
+
+
+def test_gpu_zero_util_recorded() -> None:
+    cfg = {"optimizer": {"mode": "adaptive"}, "thresholds": {}}
+    state = OptimizerRuntime(last_gpu_util=None)
+    snap = _snap(gpu=0.0)
+    sleep = compute_sleep_interval(cfg, snap, state)
+    assert sleep >= 0.5
 
 
 def test_fixed_mode_uses_interval_seconds() -> None:

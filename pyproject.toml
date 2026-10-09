@@ -28,6 +28,14 @@ packages = ["gpuforge"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+addopts = "--cov=gpuforge --cov-report=term-missing --cov-fail-under=68"
+
+[tool.coverage.run]
+omit = [
+  "gpuforge/__main__.py",
+  "gpuforge/cli.py",
+  "gpuforge/daemon.py",
+]
 
 [tool.ruff]
 line-length = 100

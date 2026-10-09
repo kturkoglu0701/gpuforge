@@ -50,7 +50,8 @@ Requires **NVIDIA driver + optional `pip install gpuforge[gpu]`** for GPU utiliz
 | `gpuforge status` | Snapshot |
 | `gpuforge once --dry-run` | Preview policy actions |
 
-See `docs/DESIGN.md` for allocation order and scope.
+See `docs/DESIGN.md` for allocation order and scope.  
+**Audit:** `docs/CODE_AUDIT.md` (approval gate, coverage gaps, residual risks).
 
 ## License
 

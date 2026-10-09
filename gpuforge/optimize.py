@@ -8,8 +8,9 @@ OS processes or LLM agents.
 from __future__ import annotations
 
 import logging
+import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -35,6 +36,10 @@ DEFAULT_OPTIMIZER: dict[str, Any] = {
     "state_ttl_seconds": 120.0,
 }
 
+_SYSCALL_KINDS = frozenset(
+    {"set_nice", "set_ionice", "set_oom_score_adj", "set_cpu_affinity"},
+)
+
 
 @dataclass
 class OptimizerRuntime:
@@ -44,6 +49,7 @@ class OptimizerRuntime:
 
 
 def action_fingerprint(action: PolicyAction) -> str:
+    """Stable per intended syscall outcome (rule_id excluded to avoid duplicate applies)."""
     if action.kind == "suggest_env":
         rid = action.payload.get("rule_id", "")
         env = action.payload.get("env", {})
@@ -55,9 +61,33 @@ def action_fingerprint(action: PolicyAction) -> str:
         action.payload.get("nice"),
         action.payload.get("value"),
         action.payload.get("class"),
-        action.payload.get("rule_id"),
+        action.payload.get("cpus"),
+        action.payload.get("env"),
     )
     return "|".join(str(x) for x in core)
+
+
+def collapse_actions(actions: list[PolicyAction]) -> list[PolicyAction]:
+    """Merge duplicate syscalls per (kind, pid); set_nice keeps lowest nice (highest priority)."""
+    passthrough: list[PolicyAction] = []
+    merged: dict[tuple[str, int], PolicyAction] = {}
+    for action in actions:
+        if action.kind not in _SYSCALL_KINDS:
+            passthrough.append(action)
+            continue
+        key = (action.kind, action.pid)
+        existing = merged.get(key)
+        if existing is None:
+            merged[key] = action
+            continue
+        if action.kind == "set_nice":
+            new_nice = int(action.payload.get("nice", 0))
+            old_nice = int(existing.payload.get("nice", 0))
+            if new_nice < old_nice:
+                merged[key] = action
+        else:
+            merged[key] = action
+    return passthrough + list(merged.values())
 
 
 def _optimizer_cfg(config: dict[str, Any]) -> dict[str, Any]:
@@ -69,28 +99,24 @@ def _optimizer_cfg(config: dict[str, Any]) -> dict[str, Any]:
 
 
 def prune_stale_state(state: OptimizerRuntime, ttl: float) -> None:
+    """Drop cache entries for dead PIDs or expired TTL (no full process table scan)."""
     now = time.monotonic()
-    live: set[int] = set()
-    for proc in psutil.process_iter(["pid"]):
-        try:
-            live.add(proc.pid)
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
-    stale_keys: list[str] = []
-    for key, ts in state.applied_at.items():
+    for key in list(state.applied_at):
+        ts = state.applied_at[key]
         if now - ts > ttl:
-            stale_keys.append(key)
+            state.applied_at.pop(key, None)
+            continue
+        if key.startswith("suggest_env:"):
             continue
         parts = key.split("|")
-        if len(parts) > 1 and parts[0] != "suggest_env":
-            try:
-                pid = int(parts[1])
-            except ValueError:
-                continue
-            if pid not in live:
-                stale_keys.append(key)
-    for key in stale_keys:
-        state.applied_at.pop(key, None)
+        if len(parts) < 2:
+            continue
+        try:
+            pid = int(parts[1])
+        except ValueError:
+            continue
+        if not psutil.pid_exists(pid):
+            state.applied_at.pop(key, None)
 
 
 def filter_redundant_actions(
@@ -174,42 +200,46 @@ class RuntimeOptimizer:
         self.policy = PolicyEngine(config)
         self.state = OptimizerRuntime()
         self._fast_cpu = False
+        self._lock = threading.Lock()
 
     def tick(self, *, dry_run: bool, user_only: bool) -> TickResult:
         opt = _optimizer_cfg(self.config)
-        prune_stale_state(self.state, float(opt["state_ttl_seconds"]))
+        with self._lock:
+            prune_stale_state(self.state, float(opt["state_ttl_seconds"]))
 
         snap = collect_snapshot(user_only=user_only, fast_cpu=self._fast_cpu)
         self._fast_cpu = True
 
         result = self.policy.evaluate(snap)
         notes = tuple(result.notes)
-        if notes != self.state.last_rule_notes:
-            for note in notes:
-                if note not in self.state.last_rule_notes:
-                    log.info("rule active: %s", note)
-            self.state.last_rule_notes = notes
+        with self._lock:
+            if notes != self.state.last_rule_notes:
+                for note in notes:
+                    if note not in self.state.last_rule_notes:
+                        log.info("rule active: %s", note)
+                self.state.last_rule_notes = notes
 
-        planned = result.actions
-        to_apply = filter_redundant_actions(planned, self.state)
+        planned = collapse_actions(result.actions)
+        with self._lock:
+            to_apply = filter_redundant_actions(planned, self.state)
         outcomes = apply_actions_concurrent(
             to_apply,
             dry_run=dry_run,
             max_workers=int(opt["apply_workers"]),
         )
         now = time.monotonic()
-        for action, outcome in zip(to_apply, outcomes, strict=True):
-            if outcome.applied and not dry_run:
-                self.state.applied_at[action_fingerprint(action)] = now
-            if outcome.applied or dry_run or "dry-run" in outcome.message:
-                log.info("%s", outcome.message)
+        with self._lock:
+            for action, outcome in zip(to_apply, outcomes, strict=True):
+                if outcome.applied and not dry_run:
+                    self.state.applied_at[action_fingerprint(action)] = now
+                if outcome.applied or dry_run or "dry-run" in outcome.message:
+                    log.info("%s", outcome.message)
 
-        if snapshot_gpu := snap.gpu.utilization_pct:
-            self.state.last_gpu_util = snapshot_gpu
-        elif snap.gpu.available:
-            self.state.last_gpu_util = snap.gpu.utilization_pct
+            if snap.gpu.available and snap.gpu.utilization_pct is not None:
+                self.state.last_gpu_util = snap.gpu.utilization_pct
 
-        sleep_s = compute_sleep_interval(self.config, snap, self.state)
+            sleep_s = compute_sleep_interval(self.config, snap, self.state)
+
         return TickResult(
             snapshot=snap,
             notes=notes,

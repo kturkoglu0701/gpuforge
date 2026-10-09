@@ -1,18 +1,45 @@
 from __future__ import annotations
 
+import atexit
+import threading
+
 import psutil
 
 from gpuforge.classify import scan_processes
 from gpuforge.models import GpuSnapshot, SystemSnapshot
 
+_nvml_lock = threading.Lock()
+_nvml_ready = False
+
+
+def _shutdown_nvml() -> None:
+    global _nvml_ready
+    with _nvml_lock:
+        if not _nvml_ready:
+            return
+        try:
+            import pynvml  # type: ignore[import-untyped]
+
+            pynvml.nvmlShutdown()
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            _nvml_ready = False
+
+
+atexit.register(_shutdown_nvml)
+
 
 def read_gpu() -> GpuSnapshot:
-    """NVML metrics when nvidia-ml-py is installed; graceful fallback otherwise."""
-    try:
-        import pynvml  # type: ignore[import-untyped]  # nvidia-ml-py
-
-        pynvml.nvmlInit()
+    """NVML metrics when nvidia-ml-py is installed; thread-safe init, graceful fallback."""
+    with _nvml_lock:
         try:
+            import pynvml  # type: ignore[import-untyped]
+
+            global _nvml_ready
+            if not _nvml_ready:
+                pynvml.nvmlInit()
+                _nvml_ready = True
             handle = pynvml.nvmlDeviceGetHandleByIndex(0)
             name = pynvml.nvmlDeviceGetName(handle)
             if isinstance(name, bytes):
@@ -26,13 +53,8 @@ def read_gpu() -> GpuSnapshot:
                 memory_used_mb=mem.used / (1024 * 1024),
                 memory_total_mb=mem.total / (1024 * 1024),
             )
-        finally:
-            try:
-                pynvml.nvmlShutdown()
-            except Exception:  # noqa: BLE001
-                pass
-    except Exception as exc:  # noqa: BLE001 — optional GPU stack
-        return GpuSnapshot(available=False, error=str(exc))
+        except Exception as exc:  # noqa: BLE001 — optional GPU stack
+            return GpuSnapshot(available=False, error=str(exc))
 
 
 def collect_snapshot(user_only: bool = True, *, fast_cpu: bool = False) -> SystemSnapshot:
