@@ -217,8 +217,6 @@ def _classify_rules(name: str, argv: Sequence[str]) -> tuple[Category, float]:
             "cursor.app",
         ),
     ):
-        if _is_ide_extension(text):
-            return "ai_ide_extension", 0.88
         return "ai_ide_host", 0.9
 
     if _has_any(
@@ -233,8 +231,6 @@ def _classify_rules(name: str, argv: Sequence[str]) -> tuple[Category, float]:
             "\\codium.exe",
         ),
     ) or re.search(r"(?:^|[\s/\\])code(?:\s|$)", text):
-        if _is_ide_extension(text):
-            return "ai_ide_extension", 0.85
         return "ai_ide_host", 0.88
 
     if _has_any(text, ("windsurf", "codeium windsurf", "/windsurf")):
@@ -248,8 +244,6 @@ def _classify_rules(name: str, argv: Sequence[str]) -> tuple[Category, float]:
         r"goland|clion|rider|datagrip|phpstorm|rubymine|fleet)",
         text,
     ):
-        if _is_ide_extension(text):
-            return "ai_ide_extension", 0.82
         return "ai_ide_host", 0.86
 
     return "unknown", 0.0
