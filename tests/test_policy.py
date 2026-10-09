@@ -77,6 +77,19 @@ def test_gpu_high_protects_llm() -> None:
     assert oom.payload["value"] == -900
 
 
+def test_cpu_llm_does_not_get_gpu_pin() -> None:
+    engine = PolicyEngine()
+    snap = _snapshot(
+        gpu_util=95.0,
+        processes=[_proc(7, ProcessCategory.LLM_LOCAL_CPU)],
+    )
+    result = engine.evaluate(snap)
+    protect = [a for a in result.actions if a.pid == 7]
+    assert any(a.kind == "set_nice" and a.payload["nice"] == 0 for a in protect)
+    assert not any(a.kind == "suggest_env" for a in protect)
+    assert not any(a.kind == "set_oom_score_adj" for a in protect)
+
+
 def test_ram_pressure_demotes_indexer_and_extension() -> None:
     engine = PolicyEngine()
     snap = _snapshot(

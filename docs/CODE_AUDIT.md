@@ -20,6 +20,10 @@
 - [Policy audit](d9ae7935-dea8-441c-b178-332851e7e45c): evaluate order GPU → IDE lean → CPU/RAM; removed redundant LLM-only rule; pressure rule includes indexers/builds; shared `plan_utils.collapse_actions`.
 - [Coverage audit](061bac0d-c624-4b37-b32b-fb10f83f7acc): partial — config/metrics/platform tests added; `actions` handlers still thin.
 
+## Policy classify follow-up
+
+[Policy algorithm audit](284b5fbd-32b6-4a0e-9752-2c58ae4e06d9): IDE-extension matching no longer treats `idea` or `code` as raw substrings. `-ngl 0` is CPU. `--continue` and `server -m 2048` are not LLMs. CPU-only LLMs are not given the GPU nice, OOM score, or `CUDA_VISIBLE_DEVICES` pin.
+
 ## Coverage gate
 
 `pytest` fails under **99%** line coverage of `gpuforge` (`cli` and `daemon` included). `__main__.py` is the console shim.

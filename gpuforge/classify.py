@@ -54,20 +54,20 @@ def _has_any(text: str, needles: tuple[str, ...]) -> bool:
 
 
 def _gpu_hints(text: str) -> bool:
-    gpu_markers = (
-        "--gpu-layers",
-        "-ngl",
-        "cuda",
-        "cublas",
-        "vulkan",
-        "metal",
-        "--device cuda",
-        "--tensor-parallel",
-        "nvidia",
-    )
-    if _has_any(text, gpu_markers):
+    if re.search(r"(?:--gpu-layers|--n-gpu-layers|-ngl)\s+[1-9]", text):
         return True
-    return bool(re.search(r"\b-ngl\s+[1-9]", text))
+    return _has_any(
+        text,
+        (
+            "cuda",
+            "cublas",
+            "vulkan",
+            "metal",
+            "--device cuda",
+            "--tensor-parallel",
+            "nvidia",
+        ),
+    )
 
 
 def _cpu_only_llm_hints(text: str) -> bool:
@@ -109,8 +109,8 @@ def _is_llama_binary(text: str, name: str) -> bool:
         ),
     ):
         return True
-    if base in ("llama-server", "llama-cli", "main", "server") and re.search(
-        r"(?:^|\s)-m\s", text
+    if base in ("main", "server") and re.search(
+        r"(?:\.gguf|(?:^|\s)-ngl\s|(?:^|\s)--gpu-layers\s)", text
     ):
         return True
     return False
@@ -160,9 +160,9 @@ def _classify_rules(name: str, argv: Sequence[str]) -> tuple[Category, float]:
         return "llm_local_gpu", 0.92
 
     if _has_any(text, ("tabby", "tabby serve", "tabby-agent")):
-        cat = "llm_local_gpu" if _gpu_hints(text) or not _cpu_only_llm_hints(text) else "llm_local_cpu"
-        conf = 0.85 if cat == "llm_local_gpu" else 0.8
-        return cat, conf
+        if _cpu_only_llm_hints(text) or not _gpu_hints(text):
+            return "llm_local_cpu", 0.8
+        return "llm_local_gpu", 0.85
 
     if _has_any(text, ("ollama", "ollama serve", "ollama runner")):
         if _cpu_only_llm_hints(text):
@@ -177,14 +177,17 @@ def _classify_rules(name: str, argv: Sequence[str]) -> tuple[Category, float]:
     if "copilot-language-server" in text:
         return "ai_ide_extension", 0.95
 
-    if _has_any(text, ("continue", "continuedev", "@continuedev")):
+    if re.search(r"(?:^|[\s/])continue(?:[\s./]|$)", text) or _has_any(
+        text, ("continuedev", "@continuedev")
+    ):
         if _is_remote_llm_client(text):
             return "llm_remote_client", 0.78
         return "ai_ide_extension", 0.84
 
-    if _is_ide_extension(text) and _has_any(
+    if _is_ide_extension(text) and re.search(
+        r"(?:jetbrains|(?:^|[\s/\\])(?:cursor|codium|windsurf|zed|pycharm|webstorm|code)(?:[\s./\\]|$)"
+        r"|(?:^|[\s/\\])idea(?:\.sh|[\s/\\]|$))",
         text,
-        ("cursor", "code", "codium", "windsurf", "zed", "jetbrains", "idea", "pycharm", "webstorm"),
     ):
         return "ai_ide_extension", 0.9
 
@@ -196,7 +199,7 @@ def _classify_rules(name: str, argv: Sequence[str]) -> tuple[Category, float]:
     if "pyright" in text or "pyright-langserver" in text:
         return "indexer", 0.9
 
-    if "eslint" in text and _has_any(text, ("eslint", "eslint-server", "--stdin")):
+    if "eslint" in text:
         return "indexer", 0.88
 
     if "tsserver" in text or "typescript-language-server" in text:

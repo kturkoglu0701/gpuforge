@@ -97,6 +97,7 @@ class PolicyEngine:
                     by_cat.get(ProcessCategory.LLM_LOCAL_GPU, []),
                     self.config,
                     rule_id=RULE_IDS[0],
+                    category=ProcessCategory.LLM_LOCAL_GPU,
                 )
             )
             actions.extend(
@@ -104,6 +105,7 @@ class PolicyEngine:
                     by_cat.get(ProcessCategory.LLM_LOCAL_CPU, []),
                     self.config,
                     rule_id=RULE_IDS[0],
+                    category=ProcessCategory.LLM_LOCAL_CPU,
                 )
             )
             actions.extend(
@@ -275,18 +277,19 @@ def _protect_llm(
     config: dict[str, Any],
     *,
     rule_id: str,
+    category: ProcessCategory,
 ) -> list[PolicyAction]:
     actions: list[PolicyAction] = []
     protect_nice = int(
         config["protect_nice"].get(
-            ProcessCategory.LLM_LOCAL_GPU,
-            config["nice"].get(ProcessCategory.LLM_LOCAL_GPU, -10),
+            category,
+            config["nice"].get(category, 0),
         )
     )
-    oom = config["oom_score_adj"].get(ProcessCategory.LLM_LOCAL_GPU, {})
-    oom_val = int(oom.get("min", -500))
-    env_hints = config["suggest_env"].get("llm_local_gpu", {})
-    affinity = config["cpu_affinity"].get(ProcessCategory.LLM_LOCAL_GPU)
+    oom = config["oom_score_adj"].get(category, {})
+    oom_val = int(oom.get("min", -500)) if oom else 0
+    env_hints = config["suggest_env"].get(category.value, {})
+    affinity = config["cpu_affinity"].get(category)
 
     for proc in llm_procs:
         actions.append(

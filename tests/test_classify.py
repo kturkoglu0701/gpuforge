@@ -104,3 +104,20 @@ def test_parse_cmdline_string_helper() -> None:
 def test_idea_host_not_ideal_substring() -> None:
     assert classify_cmdline("idea", "/opt/idea/bin/idea.sh").category == ProcessCategory.AI_IDE_HOST
     assert classify_cmdline("ideal", "ideal --version").category == ProcessCategory.UNKNOWN
+    lsp = classify_cmdline(
+        "node",
+        "node /opt/ideal/typescript-language-server --stdio",
+    )
+    assert lsp.category == ProcessCategory.INDEXER
+    dotted = classify_cmdline(
+        "node",
+        "node /repo/.idea/typescript-language-server --stdio",
+    )
+    assert dotted.category == ProcessCategory.INDEXER
+
+
+def test_false_positive_tokens() -> None:
+    assert classify_cmdline("python", "python train.py --continue").category == ProcessCategory.UNKNOWN
+    assert classify_cmdline("server", "server -m 2048").category == ProcessCategory.UNKNOWN
+    assert classify_cmdline("tabby", "tabby serve -ngl 0").category == ProcessCategory.LLM_LOCAL_CPU
+    assert classify_cmdline("tabby", "tabby serve --gpu-layers 32").category == ProcessCategory.LLM_LOCAL_GPU
