@@ -1,0 +1,43 @@
+# Bundled defaults — override: ~/.config/gpuforge/config.yaml
+
+interval_seconds: 5
+dry_run: false
+user_only: true
+ide_lean_enabled: true
+
+optimizer:
+  mode: adaptive
+  interval_min: 0.5
+  interval_max: 8.0
+  interval_active: 1.0
+  interval_idle: 6.0
+  gpu_surge_delta: 12
+  apply_workers: 6
+  state_ttl_seconds: 120
+
+thresholds:
+  gpu_util_high: 55
+  memory_pressure_percent: 88
+  cpu_pressure_percent: 92
+
+nice:
+  llm_local_gpu: -10
+  ai_ide_host: 0
+  ai_ide_extension: 6
+  indexer: 12
+  build_tool: 10
+  llm_remote_client: 4
+
+demote_nice_delta: 8
+
+protect_nice:
+  llm_local_gpu: -15
+
+ionice_demote:
+  class: idle
+  value: 7
+
+suggest_env:
+  llm_local_gpu:
+    CUDA_VISIBLE_DEVICES: "0"
+    OMP_NUM_THREADS: "4"

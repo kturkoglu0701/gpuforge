@@ -1,0 +1,8 @@
+# Dev checkout copy — canonical bundled file: gpuforge/data/default.yaml
+
+ide_lean_enabled: true
+
+thresholds:
+  gpu_util_high: 55
+  memory_pressure_percent: 88
+  cpu_pressure_percent: 92
