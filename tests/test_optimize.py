@@ -90,6 +90,19 @@ def test_gpu_zero_util_recorded() -> None:
     assert sleep >= 0.5
 
 
+def test_sleep_interruptible_returns_on_stop() -> None:
+    from gpuforge.optimize import sleep_interruptible
+
+    calls = {"n": 0}
+
+    def stop() -> bool:
+        calls["n"] += 1
+        return calls["n"] > 1
+
+    sleep_interruptible(2.0, stop, chunk=0.01)
+    assert calls["n"] >= 1
+
+
 def test_fixed_mode_uses_interval_seconds() -> None:
     cfg = {"optimizer": {"mode": "fixed"}, "interval_seconds": 4.5, "thresholds": {}}
     sleep = compute_sleep_interval(cfg, _snap(), OptimizerRuntime())

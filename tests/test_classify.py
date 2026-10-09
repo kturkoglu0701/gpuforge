@@ -99,3 +99,8 @@ def test_classify_process_live() -> None:
 
 def test_parse_cmdline_string_helper() -> None:
     assert parse_cmdline_string("node tsserver.js --stdio") == ("node", "tsserver.js", "--stdio")
+
+
+def test_idea_host_not_ideal_substring() -> None:
+    assert classify_cmdline("idea", "/opt/idea/bin/idea.sh").category == ProcessCategory.AI_IDE_HOST
+    assert classify_cmdline("ideal", "ideal --version").category == ProcessCategory.UNKNOWN

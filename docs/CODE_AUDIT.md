@@ -20,6 +20,12 @@
 - [Policy audit](d9ae7935-dea8-441c-b178-332851e7e45c): evaluate order GPU → IDE lean → CPU/RAM; removed redundant LLM-only rule; pressure rule includes indexers/builds; shared `plan_utils.collapse_actions`.
 - [Coverage audit](061bac0d-c624-4b37-b32b-fb10f83f7acc): partial — config/metrics/platform tests added; `actions` handlers still thin.
 
+## Round 2 (v0.3.2)
+
+- Classifier: JetBrains `idea` is a path/token match, not a substring (`ideal` no longer counts as an IDE).
+- `ide_session_active` uses `ide_host_processes` (no duplicate scan).
+- Tests: OOM/affinity dry-run, interruptible sleep, mocked NVML success, `idea` vs `ideal`.
+
 ## Findings addressed in this audit
 
 1. **GPU util 0% treated as false** — fixed (`is not None` check).

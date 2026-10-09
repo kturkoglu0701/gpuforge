@@ -243,22 +243,10 @@ def _classify_rules(name: str, argv: Sequence[str]) -> tuple[Category, float]:
     if _has_any(text, (" zed ", "/zed", "\\zed.exe", "zed-editor")):
         return "ai_ide_host", 0.88
 
-    if _has_any(
+    if re.search(
+        r"(?:jetbrains|intellij|(?:^|[\s/\\])idea(?:\.sh|\s|$)|pycharm|webstorm|"
+        r"goland|clion|rider|datagrip|phpstorm|rubymine|fleet)",
         text,
-        (
-            "jetbrains",
-            "intellij",
-            "idea",
-            "pycharm",
-            "webstorm",
-            "goland",
-            "clion",
-            "rider",
-            "datagrip",
-            "phpstorm",
-            "rubymine",
-            "fleet",
-        ),
     ):
         if _is_ide_extension(text):
             return "ai_ide_extension", 0.82
