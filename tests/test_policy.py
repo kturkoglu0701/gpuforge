@@ -61,6 +61,8 @@ def test_llm_active_demotes_indexer_via_gpu_rule() -> None:
     assert (200, "set_ionice") in kinds
     nice_200 = next(a for a in result.actions if a.pid == 200 and a.kind == "set_nice")
     assert nice_200.payload["nice"] == 10 + 8
+    oom_200 = next(a for a in result.actions if a.pid == 200 and a.kind == "set_oom_score_adj")
+    assert oom_200.payload["value"] == 400
 
 
 def test_gpu_high_protects_llm() -> None:
@@ -71,6 +73,8 @@ def test_gpu_high_protects_llm() -> None:
     protect = [a for a in result.actions if a.pid == 42 and a.payload.get("rule_id") == RULE_IDS[0]]
     assert any(a.kind == "set_nice" and a.payload["nice"] == -15 for a in protect)
     assert any(a.kind == "suggest_env" for a in protect)
+    oom = next(a for a in protect if a.kind == "set_oom_score_adj")
+    assert oom.payload["value"] == -900
 
 
 def test_ram_pressure_demotes_indexer_and_extension() -> None:

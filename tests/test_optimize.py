@@ -74,6 +74,31 @@ def test_collapse_set_nice_keeps_higher_priority() -> None:
     out = collapse_actions([low, high])
     assert len(out) == 1
     assert out[0].payload["nice"] == -5
+    # Lower nice first must not lose to a later demotion (not last-write-wins).
+    out_rev = collapse_actions([high, low])
+    assert out_rev[0].payload["nice"] == -5
+
+
+def test_collapse_non_nice_is_last_write_wins() -> None:
+    oom = collapse_actions(
+        [
+            PolicyAction("set_oom_score_adj", 1, "a", {"value": -900}),
+            PolicyAction("set_oom_score_adj", 1, "b", {"value": 400}),
+        ]
+    )
+    assert oom[0].payload["value"] == 400
+    aff = collapse_actions(
+        [
+            PolicyAction("set_cpu_affinity", 1, "a", {"cpus": [0, 1]}),
+            PolicyAction("set_cpu_affinity", 1, "b", {"cpus": [2, 3]}),
+            PolicyAction("set_cpu_affinity", 2, "c", {"cpus": [0]}),
+            PolicyAction("suggest_env", 1, "d", {"env": {"OMP_NUM_THREADS": "4"}}),
+        ]
+    )
+    by_pid = {a.pid: a for a in aff if a.kind == "set_cpu_affinity"}
+    assert by_pid[1].payload["cpus"] == [2, 3]
+    assert by_pid[2].payload["cpus"] == [0]
+    assert any(a.kind == "suggest_env" for a in aff)
 
 
 def test_fingerprint_ignores_rule_id_for_nice() -> None:
@@ -90,17 +115,22 @@ def test_gpu_zero_util_recorded() -> None:
     assert sleep >= 0.5
 
 
-def test_sleep_interruptible_returns_on_stop() -> None:
+def test_sleep_interruptible_bounds_wait(monkeypatch) -> None:
     from gpuforge.optimize import sleep_interruptible
 
-    calls = {"n": 0}
+    slept: list[float] = []
+    monkeypatch.setattr("gpuforge.optimize.time.sleep", lambda s: slept.append(s))
 
-    def stop() -> bool:
-        calls["n"] += 1
-        return calls["n"] > 1
+    sleep_interruptible(5.0, lambda: True, chunk=0.25)
+    assert slept == []
 
-    sleep_interruptible(2.0, stop, chunk=0.01)
-    assert calls["n"] >= 1
+    flags = iter([False, True])
+    sleep_interruptible(5.0, lambda: next(flags), chunk=0.25)
+    assert slept == [0.25]
+
+    slept.clear()
+    sleep_interruptible(0.5, None, chunk=0.25)
+    assert slept == [0.25, 0.25]
 
 
 def test_fixed_mode_uses_interval_seconds() -> None:

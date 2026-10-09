@@ -30,6 +30,12 @@ def _shutdown_nvml() -> None:
 atexit.register(_shutdown_nvml)
 
 
+def _nvml_already_initialized(exc: BaseException) -> bool:
+    name = type(exc).__name__
+    text = str(exc)
+    return "AlreadyInitialized" in name or "ALREADY_INITIALIZED" in text
+
+
 def read_gpu() -> GpuSnapshot:
     """NVML metrics when nvidia-ml-py is installed; thread-safe init, graceful fallback."""
     with _nvml_lock:
@@ -38,7 +44,11 @@ def read_gpu() -> GpuSnapshot:
 
             global _nvml_ready
             if not _nvml_ready:
-                pynvml.nvmlInit()
+                try:
+                    pynvml.nvmlInit()
+                except Exception as exc:  # noqa: BLE001
+                    if not _nvml_already_initialized(exc):
+                        return GpuSnapshot(available=False, error=str(exc))
                 _nvml_ready = True
             handle = pynvml.nvmlDeviceGetHandleByIndex(0)
             name = pynvml.nvmlDeviceGetName(handle)

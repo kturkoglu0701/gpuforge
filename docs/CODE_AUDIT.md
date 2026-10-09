@@ -20,6 +20,10 @@
 - [Policy audit](d9ae7935-dea8-441c-b178-332851e7e45c): evaluate order GPU → IDE lean → CPU/RAM; removed redundant LLM-only rule; pressure rule includes indexers/builds; shared `plan_utils.collapse_actions`.
 - [Coverage audit](061bac0d-c624-4b37-b32b-fb10f83f7acc): partial — config/metrics/platform tests added; `actions` handlers still thin.
 
+## Round 3 (coverage pins)
+
+[Coverage gap audit](c9c86984-7ffa-408c-a380-04c6fce74abd): OOM protect is **-900** and indexer demote is **400**; `set_nice` collapse keeps the lower nice even when it arrives first; other syscalls are last-write-wins; `sleep_interruptible(None)` sleeps in chunks and a stop flag returns before the next chunk; NVML records megabytes, inits once, keeps 0% util available, and treats `ALREADY_INITIALIZED` as a live session instead of a dead GPU.
+
 ## Round 2 (v0.3.2)
 
 - Classifier: JetBrains `idea` is a path/token match, not a substring (`ideal` no longer counts as an IDE).
