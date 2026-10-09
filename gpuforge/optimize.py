@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -21,6 +22,7 @@ from gpuforge.allocator import read_signals
 from gpuforge.config import load_config
 from gpuforge.metrics import collect_snapshot
 from gpuforge.models import PolicyAction, SystemSnapshot
+from gpuforge.plan_utils import collapse_actions
 from gpuforge.policy import PolicyEngine
 
 log = logging.getLogger("gpuforge.optimize")
@@ -35,11 +37,6 @@ DEFAULT_OPTIMIZER: dict[str, Any] = {
     "apply_workers": 6,
     "state_ttl_seconds": 120.0,
 }
-
-_SYSCALL_KINDS = frozenset(
-    {"set_nice", "set_ionice", "set_oom_score_adj", "set_cpu_affinity"},
-)
-
 
 @dataclass
 class OptimizerRuntime:
@@ -65,29 +62,6 @@ def action_fingerprint(action: PolicyAction) -> str:
         action.payload.get("env"),
     )
     return "|".join(str(x) for x in core)
-
-
-def collapse_actions(actions: list[PolicyAction]) -> list[PolicyAction]:
-    """Merge duplicate syscalls per (kind, pid); set_nice keeps lowest nice (highest priority)."""
-    passthrough: list[PolicyAction] = []
-    merged: dict[tuple[str, int], PolicyAction] = {}
-    for action in actions:
-        if action.kind not in _SYSCALL_KINDS:
-            passthrough.append(action)
-            continue
-        key = (action.kind, action.pid)
-        existing = merged.get(key)
-        if existing is None:
-            merged[key] = action
-            continue
-        if action.kind == "set_nice":
-            new_nice = int(action.payload.get("nice", 0))
-            old_nice = int(existing.payload.get("nice", 0))
-            if new_nice < old_nice:
-                merged[key] = action
-        else:
-            merged[key] = action
-    return passthrough + list(merged.values())
 
 
 def _optimizer_cfg(config: dict[str, Any]) -> dict[str, Any]:
@@ -174,13 +148,39 @@ def apply_actions_concurrent(
 ) -> list[ActionOutcome]:
     if not actions:
         return []
-    if dry_run or len(actions) == 1:
-        return [apply_action(a, dry_run=dry_run) for a in actions]
+    if dry_run:
+        return [apply_action(a, dry_run=True) for a in actions]
 
-    workers = max(1, min(max_workers, len(actions)))
+    by_pid: dict[int, list[int]] = defaultdict(list)
+    for idx, action in enumerate(actions):
+        by_pid[action.pid].append(idx)
+
+    outcomes: list[ActionOutcome | None] = [None] * len(actions)
+
+    def apply_indices(indices: list[int]) -> None:
+        for i in indices:
+            outcomes[i] = apply_action(actions[i], dry_run=False)
+
+    if len(by_pid) == 1:
+        apply_indices(list(range(len(actions))))
+        return [o for o in outcomes if o is not None]
+
+    workers = max(1, min(max_workers, len(by_pid)))
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = [pool.submit(apply_action, a, dry_run=False) for a in actions]
-        return [fut.result() for fut in futures]
+        futures = [pool.submit(apply_indices, idxs) for idxs in by_pid.values()]
+        for fut in futures:
+            fut.result()
+    return [o for o in outcomes if o is not None]
+
+
+def sleep_interruptible(seconds: float, stop_flag: Callable[[], bool] | None, chunk: float = 0.25) -> None:
+    remaining = max(0.0, seconds)
+    while remaining > 0:
+        if stop_flag and stop_flag():
+            return
+        step = min(chunk, remaining)
+        time.sleep(step)
+        remaining -= step
 
 
 @dataclass
@@ -222,11 +222,18 @@ class RuntimeOptimizer:
         planned = collapse_actions(result.actions)
         with self._lock:
             to_apply = filter_redundant_actions(planned, self.state)
-        outcomes = apply_actions_concurrent(
-            to_apply,
-            dry_run=dry_run,
-            max_workers=int(opt["apply_workers"]),
-        )
+        try:
+            outcomes = apply_actions_concurrent(
+                to_apply,
+                dry_run=dry_run,
+                max_workers=int(opt["apply_workers"]),
+            )
+        except Exception:
+            with self._lock:
+                for action in to_apply:
+                    self.state.applied_at.pop(action_fingerprint(action), None)
+            log.exception("apply batch failed; action cache rolled back for this tick")
+            raise
         now = time.monotonic()
         with self._lock:
             for action, outcome in zip(to_apply, outcomes, strict=True):
@@ -285,4 +292,4 @@ def run_optimized_loop(
         )
         if once:
             break
-        time.sleep(tick.sleep_seconds)
+        sleep_interruptible(tick.sleep_seconds, stop_flag)

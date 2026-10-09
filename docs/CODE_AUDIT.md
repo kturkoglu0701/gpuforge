@@ -14,6 +14,12 @@
 | **Test coverage** | **76%** line on core modules (`cli`/`daemon` entrypoints omitted) | 46 tests; gate `cov-fail-under=68` |
 | **Approval** | **Conditional pass** | Suitable for POC / personal Linux use; not production hardening for untrusted multi-tenant |
 
+## Subagent follow-up (post-review)
+
+- [Concurrency audit](df50af51-5edf-4076-a985-5741baf48c32): signal handler no longer logs; handlers restored in `finally`; chunked `sleep_interruptible`; per-PID serialized applies; apply-batch cache rollback on failure.
+- [Policy audit](d9ae7935-dea8-441c-b178-332851e7e45c): evaluate order GPU → IDE lean → CPU/RAM; removed redundant LLM-only rule; pressure rule includes indexers/builds; shared `plan_utils.collapse_actions`.
+- [Coverage audit](061bac0d-c624-4b37-b32b-fb10f83f7acc): partial — config/metrics/platform tests added; `actions` handlers still thin.
+
 ## Findings addressed in this audit
 
 1. **GPU util 0% treated as false** — fixed (`is not None` check).

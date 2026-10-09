@@ -264,9 +264,6 @@ def _classify_rules(name: str, argv: Sequence[str]) -> tuple[Category, float]:
             return "ai_ide_extension", 0.82
         return "ai_ide_host", 0.86
 
-    if "node" in text and "tsserver" in text:
-        return "indexer", 0.75
-
     return "unknown", 0.0
 
 

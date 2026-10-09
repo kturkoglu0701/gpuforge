@@ -5,6 +5,7 @@ from typing import Any
 
 from gpuforge.allocator import read_signals
 from gpuforge.models import PolicyAction, PolicyResult, ProcessCategory, ProcessInfo, SystemSnapshot
+from gpuforge.plan_utils import collapse_actions
 
 DEFAULT_POLICY_CONFIG: dict[str, Any] = {
     "ide_lean_enabled": True,
@@ -44,9 +45,8 @@ DEFAULT_POLICY_CONFIG: dict[str, Any] = {
 }
 
 RULE_IDS = (
-    "ide_session_lean_cpu",
     "gpu_operational_protect_compute",
-    "llm_active_demote_indexer_build",
+    "ide_session_lean_cpu",
     "cpu_ram_pressure_secondary",
 )
 
@@ -63,23 +63,18 @@ class PolicyEngine:
         return [
             {
                 "id": RULE_IDS[0],
-                "when": "AI IDE host detected (Cursor, VS Code, …)",
-                "then": "Proactively demote indexer/build_tool — keep CPU/RAM free for GPU",
+                "when": f"GPU util >= {t['gpu_util_high']}% or local GPU LLM process",
+                "then": "Protect GPU compute; shed extension/indexer/build CPU",
             },
             {
                 "id": RULE_IDS[1],
-                "when": f"GPU util >= {t['gpu_util_high']}% or local GPU LLM process",
-                "then": "Protect GPU compute; shed IDE extension CPU while GPU is busy",
+                "when": "AI IDE host detected (Cursor, VS Code, …)",
+                "then": "Demote indexer/build_tool — keep CPU/RAM free for GPU",
             },
             {
                 "id": RULE_IDS[2],
-                "when": "llm_local_gpu process running",
-                "then": "Demote indexer/build_tool competing with inference",
-            },
-            {
-                "id": RULE_IDS[3],
                 "when": f"RAM >= {t['memory_pressure_percent']}% or CPU >= {t['cpu_pressure_percent']}%",
-                "then": "Secondary: demote IDE extensions and remote LLM clients",
+                "then": "Demote extensions, indexers, builds, remote LLM clients",
             },
         ]
 
@@ -94,59 +89,64 @@ class PolicyEngine:
             memory_pressure_percent=float(t["memory_pressure_percent"]),
             cpu_pressure_percent=float(t.get("cpu_pressure_percent", 92.0)),
         )
-        if bool(self.config.get("ide_lean_enabled", True)) and signals.ide_active:
+        gpu_phase = signals.llm_gpu_active or signals.gpu_busy
+        if gpu_phase:
             notes.append(RULE_IDS[0])
+            actions.extend(
+                _protect_llm(
+                    by_cat.get(ProcessCategory.LLM_LOCAL_GPU, []),
+                    self.config,
+                    rule_id=RULE_IDS[0],
+                )
+            )
+            actions.extend(
+                _protect_llm(
+                    by_cat.get(ProcessCategory.LLM_LOCAL_CPU, []),
+                    self.config,
+                    rule_id=RULE_IDS[0],
+                )
+            )
             actions.extend(
                 _demote_categories(
                     by_cat,
-                    (ProcessCategory.INDEXER, ProcessCategory.BUILD_TOOL),
+                    (
+                        ProcessCategory.AI_IDE_EXTENSION,
+                        ProcessCategory.INDEXER,
+                        ProcessCategory.BUILD_TOOL,
+                    ),
                     self.config,
                     rule_id=RULE_IDS[0],
                 )
             )
 
-        gpu_phase = signals.llm_gpu_active or signals.gpu_busy
-        if gpu_phase:
+        if bool(self.config.get("ide_lean_enabled", True)) and signals.ide_active:
             notes.append(RULE_IDS[1])
-            actions.extend(
-                _protect_llm(
-                    by_cat.get(ProcessCategory.LLM_LOCAL_GPU, []),
-                    self.config,
-                    rule_id=RULE_IDS[1],
-                )
-            )
-            actions.extend(
-                _demote_categories(
-                    by_cat,
-                    (ProcessCategory.AI_IDE_EXTENSION, ProcessCategory.INDEXER, ProcessCategory.BUILD_TOOL),
-                    self.config,
-                    rule_id=RULE_IDS[1],
-                )
-            )
-
-        if signals.llm_gpu_active:
-            notes.append(RULE_IDS[2])
             actions.extend(
                 _demote_categories(
                     by_cat,
                     (ProcessCategory.INDEXER, ProcessCategory.BUILD_TOOL),
                     self.config,
-                    rule_id=RULE_IDS[2],
+                    rule_id=RULE_IDS[1],
                 )
             )
 
         if signals.ram_pressure or signals.cpu_pressure:
-            notes.append(RULE_IDS[3])
+            notes.append(RULE_IDS[2])
             actions.extend(
                 _demote_categories(
                     by_cat,
-                    (ProcessCategory.AI_IDE_EXTENSION, ProcessCategory.LLM_REMOTE_CLIENT),
+                    (
+                        ProcessCategory.AI_IDE_EXTENSION,
+                        ProcessCategory.INDEXER,
+                        ProcessCategory.BUILD_TOOL,
+                        ProcessCategory.LLM_REMOTE_CLIENT,
+                    ),
                     self.config,
-                    rule_id=RULE_IDS[3],
+                    rule_id=RULE_IDS[2],
                 )
             )
 
-        return PolicyResult(actions=_dedupe_actions(actions), notes=notes)
+        return PolicyResult(actions=collapse_actions(actions), notes=notes)
 
 
 def _normalize_config(raw: dict[str, Any]) -> dict[str, Any]:
@@ -327,14 +327,3 @@ def _protect_llm(
     return actions
 
 
-def _dedupe_actions(actions: list[PolicyAction]) -> list[PolicyAction]:
-    seen: set[tuple[str, int, str]] = set()
-    out: list[PolicyAction] = []
-    for act in actions:
-        rule_id = str(act.payload.get("rule_id", ""))
-        key = (act.kind, act.pid, rule_id)
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(act)
-    return out

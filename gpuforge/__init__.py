@@ -2,5 +2,5 @@
 
 from gpuforge.classify import ProcessInfo, classify_cmdline, classify_process
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 __all__ = ["ProcessInfo", "classify_cmdline", "classify_process", "__version__"]

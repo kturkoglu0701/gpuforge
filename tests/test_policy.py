@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from gpuforge.models import GpuSnapshot, ProcessCategory, ProcessInfo, SystemSnapshot
-from gpuforge.policy import PolicyEngine, RULE_IDS
+from gpuforge.policy import RULE_IDS, PolicyEngine
 
 
 def _proc(pid: int, cat: ProcessCategory) -> ProcessInfo:
@@ -24,10 +24,10 @@ def _snapshot(
     )
 
 
-def test_rules_summary_lists_four_rules() -> None:
+def test_rules_summary_lists_three_rules() -> None:
     engine = PolicyEngine({"thresholds": {"gpu_util_high": 90, "memory_pressure_percent": 88}})
     summary = engine.rules_summary()
-    assert len(summary) == 4
+    assert len(summary) == 3
     assert summary[0]["id"] == RULE_IDS[0]
 
 
@@ -40,11 +40,11 @@ def test_ide_session_demotes_indexer_without_llm() -> None:
         ]
     )
     result = engine.evaluate(snap)
-    assert RULE_IDS[0] in result.notes
+    assert RULE_IDS[1] in result.notes
     assert any(a.pid == 200 and a.kind == "set_nice" for a in result.actions)
 
 
-def test_llm_active_demotes_indexer_and_build() -> None:
+def test_llm_active_demotes_indexer_via_gpu_rule() -> None:
     engine = PolicyEngine()
     snap = _snapshot(
         processes=[
@@ -54,7 +54,7 @@ def test_llm_active_demotes_indexer_and_build() -> None:
         ]
     )
     result = engine.evaluate(snap)
-    assert RULE_IDS[2] in result.notes
+    assert RULE_IDS[0] in result.notes
     kinds = {(a.pid, a.kind) for a in result.actions}
     assert (200, "set_nice") in kinds
     assert (300, "set_nice") in kinds
@@ -67,22 +67,25 @@ def test_gpu_high_protects_llm() -> None:
     engine = PolicyEngine()
     snap = _snapshot(gpu_util=95.0, processes=[_proc(42, ProcessCategory.LLM_LOCAL_GPU)])
     result = engine.evaluate(snap)
-    assert RULE_IDS[1] in result.notes
-    protect = [a for a in result.actions if a.pid == 42 and a.payload.get("rule_id") == RULE_IDS[1]]
+    assert RULE_IDS[0] in result.notes
+    protect = [a for a in result.actions if a.pid == 42 and a.payload.get("rule_id") == RULE_IDS[0]]
     assert any(a.kind == "set_nice" and a.payload["nice"] == -15 for a in protect)
     assert any(a.kind == "suggest_env" for a in protect)
 
 
-def test_ram_pressure_demotes_ai_ide_extension() -> None:
+def test_ram_pressure_demotes_indexer_and_extension() -> None:
     engine = PolicyEngine()
     snap = _snapshot(
         mem_pct=92.0,
-        processes=[_proc(55, ProcessCategory.AI_IDE_EXTENSION)],
+        processes=[
+            _proc(55, ProcessCategory.AI_IDE_EXTENSION),
+            _proc(56, ProcessCategory.INDEXER),
+        ],
     )
     result = engine.evaluate(snap)
-    assert RULE_IDS[3] in result.notes
-    demote = [a for a in result.actions if a.pid == 55 and a.kind == "set_nice"]
-    assert demote and demote[0].payload["nice"] == 8 + 8
+    assert RULE_IDS[2] in result.notes
+    assert any(a.pid == 55 and a.kind == "set_nice" for a in result.actions)
+    assert any(a.pid == 56 and a.kind == "set_nice" for a in result.actions)
 
 
 def test_yaml_threshold_aliases() -> None:
@@ -92,7 +95,7 @@ def test_yaml_threshold_aliases() -> None:
         processes=[_proc(9, ProcessCategory.AI_IDE_EXTENSION)],
     )
     result = engine.evaluate(snap)
-    assert RULE_IDS[3] in result.notes
+    assert RULE_IDS[2] in result.notes
 
 
 def test_config_string_categories_and_optional_affinity() -> None:

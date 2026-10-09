@@ -11,9 +11,8 @@ log = logging.getLogger("gpuforge")
 _stop = False
 
 
-def _handle_signal(signum: int, _frame: object) -> None:
+def _handle_signal(_signum: int, _frame: object) -> None:
     global _stop
-    log.info("signal %s — stopping after current tick", signum)
     _stop = True
 
 
@@ -25,14 +24,22 @@ def run_loop(
     global _stop
     _stop = False
     require_linux("run")
+    prev_int = signal.getsignal(signal.SIGINT)
+    prev_term = signal.getsignal(signal.SIGTERM)
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
 
-    log.info("GPUForge adaptive optimizer starting")
-    run_optimized_loop(
-        config_path=config_path,
-        once=once,
-        dry_run=dry_run,
-        stop_flag=lambda: _stop,
-    )
+    try:
+        log.info("GPUForge adaptive optimizer starting")
+        run_optimized_loop(
+            config_path=config_path,
+            once=once,
+            dry_run=dry_run,
+            stop_flag=lambda: _stop,
+        )
+    finally:
+        signal.signal(signal.SIGINT, prev_int)
+        signal.signal(signal.SIGTERM, prev_term)
+        if _stop:
+            log.info("stopped after signal (completed current tick)")
     log.info("GPUForge loop stopped")
